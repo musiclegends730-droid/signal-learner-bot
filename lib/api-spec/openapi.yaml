@@ -1,22 +1,29 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Signal Learner Bot API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication operations
+  - name: signals
+    description: Signal operations
+  - name: admin
+    description: Admin operations
+  - name: assets
+    description: Market assets
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,7 +31,241 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthInput"
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthInput"
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get current user
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+  /signals:
+    get:
+      operationId: listSignals
+      tags: [signals]
+      summary: List user signals
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of signals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Signal"
+
+  /signals/generate:
+    post:
+      operationId: generateSignal
+      tags: [signals]
+      summary: Generate a new signal
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateSignalInput"
+      responses:
+        "201":
+          description: Signal generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Signal"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /signals/stats:
+    get:
+      operationId: getSignalStats
+      tags: [signals]
+      summary: Get signal statistics
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Signal stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsResponse"
+
+  /signals/{id}/result:
+    patch:
+      operationId: updateSignalResult
+      tags: [signals]
+      summary: Mark signal result (WIN/LOSS)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateResultInput"
+      responses:
+        "200":
+          description: Updated signal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Signal"
+
+  /signals/weights:
+    get:
+      operationId: getWeights
+      tags: [signals]
+      summary: Get indicator weights for current user
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Indicator weights
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IndicatorWeight"
+
+  /assets:
+    get:
+      operationId: listAssets
+      tags: [assets]
+      summary: List supported assets
+      responses:
+        "200":
+          description: Supported assets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+
+  /admin/users:
+    get:
+      operationId: adminListUsers
+      tags: [admin]
+      summary: List all users (admin only)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: All users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminUser"
+
+  /admin/users/{id}:
+    delete:
+      operationId: adminDeleteUser
+      tags: [admin]
+      summary: Delete a user (admin only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: User deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
   schemas:
     HealthStatus:
       type: object
@@ -34,3 +275,186 @@ components:
       required:
         - status
 
+    AuthInput:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+      required:
+        - username
+        - password
+
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        user:
+          $ref: "#/components/schemas/User"
+      required:
+        - token
+        - user
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+        role:
+          type: string
+        createdAt:
+          type: string
+      required:
+        - id
+        - username
+        - role
+        - createdAt
+
+    AdminUser:
+      type: object
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+        role:
+          type: string
+        signalCount:
+          type: integer
+        winRate:
+          type: number
+        createdAt:
+          type: string
+      required:
+        - id
+        - username
+        - role
+        - signalCount
+        - winRate
+        - createdAt
+
+    Signal:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        asset:
+          type: string
+        action:
+          type: string
+        price:
+          type: string
+        confidence:
+          type: integer
+        result:
+          type: string
+        indicators:
+          type: object
+        timeframe:
+          type: string
+        createdAt:
+          type: string
+      required:
+        - id
+        - userId
+        - asset
+        - action
+        - price
+        - confidence
+        - result
+        - createdAt
+
+    GenerateSignalInput:
+      type: object
+      properties:
+        asset:
+          type: string
+        timeframe:
+          type: string
+      required:
+        - asset
+
+    UpdateResultInput:
+      type: object
+      properties:
+        result:
+          type: string
+          enum: [WIN, LOSS]
+      required:
+        - result
+
+    IndicatorWeight:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        name:
+          type: string
+        weight:
+          type: string
+        correctPredictions:
+          type: integer
+        totalPredictions:
+          type: integer
+        updatedAt:
+          type: string
+      required:
+        - id
+        - userId
+        - name
+        - weight
+        - correctPredictions
+        - totalPredictions
+        - updatedAt
+
+    StatsResponse:
+      type: object
+      properties:
+        totalSignals:
+          type: integer
+        wins:
+          type: integer
+        losses:
+          type: integer
+        winRate:
+          type: number
+        currentConfidence:
+          type: number
+        indicatorWeights:
+          type: array
+          items:
+            $ref: "#/components/schemas/IndicatorWeight"
+      required:
+        - totalSignals
+        - wins
+        - losses
+        - winRate
+        - currentConfidence
+        - indicatorWeights
+
+    ErrorResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+      required:
+        - success
+        - message

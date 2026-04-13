@@ -1,0 +1,88 @@
+import { Router } from 'express';
+import { db } from '@workspace/db';
+import { usersTable, indicatorWeightsTable } from '@workspace/db';
+import { eq } from 'drizzle-orm';
+import { signJwt, hashPassword, comparePassword, requireAuth, type AuthRequest } from '../auth';
+import { INDICATOR_NAMES } from '../mlEngine';
+
+export const authRouter = Router();
+
+authRouter.post('/register', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ message: 'Username and password are required' });
+    }
+    if (username.length < 3) {
+      return res.status(400).json({ message: 'Username must be at least 3 characters' });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters' });
+    }
+
+    const existing = await db.select().from(usersTable).where(eq(usersTable.username, username));
+    if (existing.length > 0) {
+      return res.status(400).json({ message: 'Username already taken' });
+    }
+
+    const isFirst = (await db.select().from(usersTable)).length === 0;
+    const passwordHash = await hashPassword(password);
+
+    const [user] = await db.insert(usersTable).values({
+      username,
+      passwordHash,
+      role: isFirst ? 'admin' : 'user',
+    }).returning();
+
+    await db.insert(indicatorWeightsTable).values(
+      INDICATOR_NAMES.map(name => ({
+        userId: user.id,
+        name,
+        weight: '1.0',
+        correctPredictions: 0,
+        totalPredictions: 0,
+      }))
+    );
+
+    const token = signJwt({ id: user.id, username: user.username, role: user.role });
+    res.status(201).json({
+      token,
+      user: { id: user.id, username: user.username, role: user.role, createdAt: user.createdAt },
+    });
+  } catch (err: any) {
+    console.error('[Auth] Register error:', err);
+    res.status(500).json({ message: err.message || 'Registration failed' });
+  }
+});
+
+authRouter.post('/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ message: 'Username and password are required' });
+    }
+
+    const [user] = await db.select().from(usersTable).where(eq(usersTable.username, username));
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid username or password' });
+    }
+
+    const valid = await comparePassword(password, user.passwordHash);
+    if (!valid) {
+      return res.status(401).json({ message: 'Invalid username or password' });
+    }
+
+    const token = signJwt({ id: user.id, username: user.username, role: user.role });
+    res.json({
+      token,
+      user: { id: user.id, username: user.username, role: user.role, createdAt: user.createdAt },
+    });
+  } catch (err: any) {
+    console.error('[Auth] Login error:', err);
+    res.status(500).json({ message: err.message || 'Login failed' });
+  }
+});
+
+authRouter.get('/me', requireAuth, (req: AuthRequest, res) => {
+  res.json(req.user);
+});

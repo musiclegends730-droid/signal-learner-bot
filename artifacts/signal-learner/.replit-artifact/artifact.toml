@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/signal-learner/"
+title = "Signal Learner Bot"
+version = "1.0.0"
+id = "artifacts/signal-learner"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/signal-learner/" ]
+localPort = 19601
+
+[services.development]
+run = "pnpm --filter @workspace/signal-learner run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/signal-learner", "run", "build" ]
+publicDir = "artifacts/signal-learner/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19601"
+BASE_PATH = "/signal-learner/"
