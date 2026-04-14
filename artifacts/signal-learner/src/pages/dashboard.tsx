@@ -26,25 +26,22 @@ import {
 } from "recharts";
 import {
   Activity,
-  ArrowDownRight,
-  ArrowUpRight,
   BarChart3,
   CheckCircle2,
   Clock,
   Crosshair,
   Layers,
   LineChart,
-  Plus,
   Settings2,
   Target,
   TrendingDown,
   TrendingUp,
   XCircle,
   Timer,
-  Zap
+  Zap,
+  Brain
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
@@ -75,16 +72,26 @@ function formatIndicatorName(name: string) {
     emaCross: "EMA Cross",
     stochastic: "Stochastic",
     priceAction: "Price Action",
-    atr: "ATR",
+    atr: "ATR Volatility",
     williamsR: "Williams %R",
     cci: "CCI",
-    adx: "ADX",
-    obv: "OBV",
+    adx: "ADX Strength",
+    obv: "OBV Volume",
     parabolicSar: "Parabolic SAR",
-    roc: "ROC",
+    roc: "ROC Momentum",
     mfi: "MFI",
-    donchianChannel: "Donchian Channel",
-    ichimoku: "Ichimoku"
+    donchianChannel: "Donchian Ch.",
+    ichimoku: "Ichimoku Cloud",
+    hma: "HMA (Hull MA)",
+    vwap: "VWAP",
+    supertrend: "Supertrend",
+    elderRay: "Elder Ray",
+    cmo: "CMO",
+    maRibbon: "MA Ribbon",
+    trix: "TRIX",
+    squeezeMomentum: "Sqz Momentum",
+    keltnerChannel: "Keltner Ch.",
+    pivotPoints: "Pivot Points",
   };
   return map[name] || name;
 }
@@ -106,18 +113,22 @@ const CustomTooltip = ({ active, payload }: any) => {
   if (active && payload && payload.length) {
     const d = payload[0].payload;
     return (
-      <div className="bg-card border border-border p-3 text-xs font-mono shadow-lg">
+      <div className="bg-card border border-border p-3 text-xs font-mono shadow-lg animate-in fade-in duration-150">
         <p className="font-bold uppercase text-foreground mb-1">{d.name}</p>
-        <p className={`${d.direction === 'BUY' ? 'text-success' : d.direction === 'SELL' ? 'text-destructive' : 'text-muted-foreground'} uppercase font-bold`}>
-          {d.direction}
+        <p className={`uppercase font-bold ${d.direction === 'BUY' ? 'text-success' : d.direction === 'SELL' ? 'text-destructive' : 'text-muted-foreground'}`}>
+          {d.direction === 'BUY' ? 'CALL ↑' : d.direction === 'SELL' ? 'PUT ↓' : 'NEUTRAL'}
         </p>
         <p className="text-muted-foreground">Confidence: {d.confidence}%</p>
-        <p className="text-muted-foreground">Value: {d.rawValue.toFixed(4)}</p>
+        {d.rawValue !== 0 && <p className="text-muted-foreground">Value: {d.rawValue.toFixed(4)}</p>}
       </div>
     );
   }
   return null;
 };
+
+function StatSkeleton() {
+  return <div className="h-8 w-20 bg-muted/30 rounded animate-pulse" />;
+}
 
 export default function Dashboard() {
   const { token } = useAuth();
@@ -129,27 +140,15 @@ export default function Dashboard() {
   const [selectedSignalId, setSelectedSignalId] = useState<number | null>(null);
 
   const { data: signals = [], isLoading: isSignalsLoading } = useListSignals({
-    query: {
-      enabled: !!token,
-      queryKey: getListSignalsQueryKey(),
-      refetchInterval: 30000
-    }
+    query: { enabled: !!token, queryKey: getListSignalsQueryKey(), refetchInterval: 30000 }
   });
 
-  const { data: stats } = useGetSignalStats({
-    query: {
-      enabled: !!token,
-      queryKey: getGetSignalStatsQueryKey(),
-      refetchInterval: 30000
-    }
+  const { data: stats, isLoading: isStatsLoading } = useGetSignalStats({
+    query: { enabled: !!token, queryKey: getGetSignalStatsQueryKey(), refetchInterval: 30000 }
   });
 
   const { data: weights = [], isLoading: isWeightsLoading } = useGetWeights({
-    query: {
-      enabled: !!token,
-      queryKey: getGetWeightsQueryKey(),
-      refetchInterval: 30000
-    }
+    query: { enabled: !!token, queryKey: getGetWeightsQueryKey(), refetchInterval: 30000 }
   });
 
   const { data: assets = FALLBACK_ASSETS } = useListAssets({
@@ -169,13 +168,13 @@ export default function Dashboard() {
       queryClient.invalidateQueries({ queryKey: getListSignalsQueryKey() });
       setSelectedSignalId(result.id);
       toast({
-        title: "Signal Ready",
-        description: `${selectedAsset} — ${result.action} @ ${result.price} | Conf: ${result.confidence}%`
+        title: `Signal Ready — ${result.action === 'BUY' ? '📈 CALL ↑' : '📉 PUT ↓'}`,
+        description: `${selectedAsset} @ ${result.price} | Confidence: ${result.confidence}% | Expiry: ${EXPIRY_MAP[selectedTimeframe]}`
       });
     } catch (e: any) {
       toast({
         title: "Analysis Failed",
-        description: e.message || "Could not fetch market data. Try another asset.",
+        description: e.message || "Could not fetch market data. Try another asset or timeframe.",
         variant: "destructive"
       });
     } finally {
@@ -194,14 +193,10 @@ export default function Dashboard() {
       queryClient.invalidateQueries({ queryKey: getGetWeightsQueryKey() });
       toast({
         title: result === "WIN" ? "Win Logged!" : "Loss Logged",
-        description: "AI model updated with this trade result."
+        description: `AI model weights updated for all 26 indicators.`
       });
     } catch (e: any) {
-      toast({
-        title: "Update Failed",
-        description: e.message || "Could not save result.",
-        variant: "destructive"
-      });
+      toast({ title: "Update Failed", description: e.message || "Could not save result.", variant: "destructive" });
     }
   };
 
@@ -210,55 +205,62 @@ export default function Dashboard() {
   const selectedSignal = signals.find(s => s.id === selectedSignalId) || (signals.length > 0 ? signals[0] : null);
   const indicators = selectedSignal?.indicators as SignalIndicators | undefined;
   const chartData = indicators ? buildVoteChartData(indicators) : [];
-
+  const totalVotes = chartData.length || 26;
   const buyVotes = chartData.filter(d => d.direction === "BUY").length;
   const sellVotes = chartData.filter(d => d.direction === "SELL").length;
   const neutralVotes = chartData.filter(d => d.direction === "NEUTRAL").length;
+  const winRate = stats ? stats.winRate * 100 : null;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in fade-in duration-300">
 
       {/* LEFT: Controls */}
       <div className="lg:col-span-3 space-y-5 flex flex-col">
 
         {/* Stats */}
         <div className="grid grid-cols-2 gap-3">
-          <div className="bg-card border border-border p-4">
+          <div className="bg-card border border-border p-4 transition-all duration-200 hover:border-primary/40">
             <span className="text-[10px] text-muted-foreground uppercase mb-1 flex items-center gap-1">
-              <Target className="w-3 h-3" /> Win Rate
+              <Target className="w-3 h-3 text-primary" /> Win Rate
             </span>
-            <span className="text-3xl font-bold text-foreground">
-              {stats ? `${(stats.winRate * 100).toFixed(1)}%` : "—"}
-            </span>
+            {isStatsLoading ? <StatSkeleton /> : (
+              <span className={`text-3xl font-bold ${winRate !== null && winRate >= 50 ? 'text-success' : winRate !== null ? 'text-destructive' : 'text-foreground'}`}>
+                {winRate !== null ? `${winRate.toFixed(1)}%` : "—"}
+              </span>
+            )}
           </div>
-          <div className="bg-card border border-border p-4">
+          <div className="bg-card border border-border p-4 transition-all duration-200 hover:border-primary/40">
             <span className="text-[10px] text-muted-foreground uppercase mb-1 flex items-center gap-1">
-              <Activity className="w-3 h-3" /> Avg Conf
+              <Activity className="w-3 h-3 text-primary" /> Avg Conf
             </span>
-            <span className="text-3xl font-bold text-foreground">
-              {stats ? `${Math.round(stats.currentConfidence)}%` : "—"}
-            </span>
+            {isStatsLoading ? <StatSkeleton /> : (
+              <span className="text-3xl font-bold text-foreground">
+                {stats ? `${Math.round(stats.currentConfidence)}%` : "—"}
+              </span>
+            )}
           </div>
-          <div className="bg-card border border-border p-4 col-span-2">
+          <div className="bg-card border border-border p-4 col-span-2 transition-all duration-200 hover:border-primary/40">
             <span className="text-[10px] text-muted-foreground uppercase mb-1 flex items-center gap-1">
-              <Layers className="w-3 h-3" /> Trades Analysed
+              <Layers className="w-3 h-3 text-primary" /> Trades Analysed
             </span>
             <div className="flex items-end justify-between">
-              <span className="text-3xl font-bold">{stats?.totalSignals ?? 0}</span>
-              <div className="flex gap-2 text-xs">
-                <span className="text-success">{stats?.wins ?? 0}W</span>
+              {isStatsLoading ? <StatSkeleton /> : (
+                <span className="text-3xl font-bold">{stats?.totalSignals ?? 0}</span>
+              )}
+              <div className="flex gap-2 text-xs font-mono">
+                <span className="text-success font-bold">{stats?.wins ?? 0}W</span>
                 <span className="text-muted-foreground">/</span>
-                <span className="text-destructive">{stats?.losses ?? 0}L</span>
+                <span className="text-destructive font-bold">{stats?.losses ?? 0}L</span>
               </div>
             </div>
           </div>
         </div>
 
         {/* Generator */}
-        <div className="bg-card border border-border">
+        <div className="bg-card border border-border transition-all duration-200">
           <div className="p-4 border-b border-border bg-muted/20">
             <h2 className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-              <Zap className="w-4 h-4 text-primary" />
+              <Zap className="w-4 h-4 text-primary animate-pulse" />
               Pocket Option Signal
             </h2>
           </div>
@@ -266,7 +268,7 @@ export default function Dashboard() {
             <div className="space-y-2">
               <label className="text-[10px] uppercase text-muted-foreground">Asset / Pair</label>
               <Select value={selectedAsset} onValueChange={setSelectedAsset}>
-                <SelectTrigger className="rounded-none border-border bg-background h-10">
+                <SelectTrigger className="rounded-none border-border bg-background h-10 transition-colors hover:border-primary/50">
                   <SelectValue placeholder="Select Asset" />
                 </SelectTrigger>
                 <SelectContent className="rounded-none border-border">
@@ -278,11 +280,9 @@ export default function Dashboard() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] uppercase text-muted-foreground">
-                Contract Duration / Expiry
-              </label>
+              <label className="text-[10px] uppercase text-muted-foreground">Contract Duration / Expiry</label>
               <Select value={selectedTimeframe} onValueChange={setSelectedTimeframe}>
-                <SelectTrigger className="rounded-none border-border bg-background h-10">
+                <SelectTrigger className="rounded-none border-border bg-background h-10 transition-colors hover:border-primary/50">
                   <SelectValue placeholder="Expiry" />
                 </SelectTrigger>
                 <SelectContent className="rounded-none border-border">
@@ -306,18 +306,22 @@ export default function Dashboard() {
               </div>
               <div className="flex justify-between">
                 <span>Indicators</span>
-                <span className="text-foreground font-bold">16 active</span>
+                <span className="text-primary font-bold">26 active</span>
+              </div>
+              <div className="flex justify-between">
+                <span>AI Model</span>
+                <span className="text-success font-bold">Per-user learned</span>
               </div>
             </div>
 
             <Button
-              className="w-full rounded-none bg-primary text-primary-foreground hover:bg-primary/90 font-bold uppercase h-12 tracking-widest"
+              className="w-full rounded-none bg-primary text-primary-foreground hover:bg-primary/90 font-bold uppercase h-12 tracking-widest transition-all duration-200 hover:shadow-lg hover:shadow-primary/20"
               onClick={handleGenerate}
               disabled={isGenerating || !selectedAsset}
             >
               {isGenerating ? (
-                <span className="flex items-center gap-2 animate-pulse">
-                  <Activity className="w-4 h-4" /> Scanning Market...
+                <span className="flex items-center gap-2">
+                  <Activity className="w-4 h-4 animate-spin" /> Scanning 26 Indicators...
                 </span>
               ) : (
                 <span className="flex items-center gap-2">
@@ -332,14 +336,21 @@ export default function Dashboard() {
         <div className="bg-card border border-border flex-1 flex flex-col">
           <div className="p-4 border-b border-border bg-muted/20 flex justify-between items-center">
             <h2 className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-              <Settings2 className="w-4 h-4 text-primary" />
+              <Brain className="w-4 h-4 text-primary" />
               AI Model Weights
             </h2>
-            <span className="text-[10px] text-muted-foreground px-2 py-0.5 border border-border">16 IND</span>
+            <span className="text-[10px] text-muted-foreground px-2 py-0.5 border border-border">
+              {weights.length}/26 IND
+            </span>
           </div>
-          <div className="p-4 flex-1 overflow-auto space-y-3">
+          <div className="p-4 flex-1 overflow-auto space-y-3 max-h-96">
             {isWeightsLoading ? (
-              <p className="text-xs text-muted-foreground text-center py-4 uppercase">Initializing model...</p>
+              [...Array(8)].map((_, i) => (
+                <div key={i} className="space-y-1">
+                  <div className="h-3 bg-muted/30 rounded animate-pulse w-3/4" />
+                  <div className="h-1.5 bg-muted/20 rounded animate-pulse" />
+                </div>
+              ))
             ) : weights.length === 0 ? (
               <p className="text-xs text-muted-foreground text-center py-4 uppercase">Mark trade results to train AI</p>
             ) : (
@@ -347,17 +358,19 @@ export default function Dashboard() {
                 const wn = Number(w.weight);
                 const acc = w.totalPredictions > 0 ? (w.correctPredictions / w.totalPredictions) * 100 : 0;
                 return (
-                  <div key={w.name} className="space-y-1">
+                  <div key={w.name} className="space-y-1 group">
                     <div className="flex justify-between text-[10px]">
-                      <span className="uppercase">{formatIndicatorName(w.name)}</span>
+                      <span className="uppercase group-hover:text-foreground transition-colors text-muted-foreground">{formatIndicatorName(w.name)}</span>
                       <span className="text-primary font-bold">{(wn * 100).toFixed(1)}%</span>
                     </div>
                     <div className="h-1.5 bg-background border border-border overflow-hidden">
-                      <div className="h-full bg-primary" style={{ width: `${Math.min(100, wn * 100 * 3)}%` }} />
+                      <div className="h-full bg-primary transition-all duration-500 ease-out" style={{ width: `${Math.min(100, wn * 100 * 3)}%` }} />
                     </div>
-                    <div className="text-[10px] text-muted-foreground text-right">
-                      {w.correctPredictions}/{w.totalPredictions} ({acc.toFixed(0)}% acc)
-                    </div>
+                    {w.totalPredictions > 0 && (
+                      <div className="text-[9px] text-muted-foreground text-right">
+                        {w.correctPredictions}/{w.totalPredictions} correct ({acc.toFixed(0)}%)
+                      </div>
+                    )}
                   </div>
                 );
               })
@@ -377,20 +390,28 @@ export default function Dashboard() {
 
         <Tabs defaultValue="pending" className="flex flex-col flex-1">
           <TabsList className="grid grid-cols-2 rounded-none border-b border-border bg-transparent h-12 p-0">
-            <TabsTrigger value="pending" className="rounded-none data-[state=active]:bg-background data-[state=active]:border-b-2 data-[state=active]:border-primary uppercase text-xs tracking-wider">
+            <TabsTrigger value="pending" className="rounded-none data-[state=active]:bg-background data-[state=active]:border-b-2 data-[state=active]:border-primary uppercase text-xs tracking-wider transition-all">
               Active ({pendingSignals.length})
             </TabsTrigger>
-            <TabsTrigger value="history" className="rounded-none data-[state=active]:bg-background data-[state=active]:border-b-2 data-[state=active]:border-primary uppercase text-xs tracking-wider">
+            <TabsTrigger value="history" className="rounded-none data-[state=active]:bg-background data-[state=active]:border-b-2 data-[state=active]:border-primary uppercase text-xs tracking-wider transition-all">
               History ({completedSignals.length})
             </TabsTrigger>
           </TabsList>
 
           <TabsContent value="pending" className="flex-1 overflow-auto p-0 m-0">
             {isSignalsLoading ? (
-              <p className="text-xs text-muted-foreground uppercase text-center py-8">Fetching feed...</p>
+              <div className="p-4 space-y-3">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="border border-border p-4 space-y-3 animate-pulse">
+                    <div className="h-4 bg-muted/30 rounded w-2/3" />
+                    <div className="h-2 bg-muted/20 rounded" />
+                    <div className="h-8 bg-muted/20 rounded" />
+                  </div>
+                ))}
+              </div>
             ) : pendingSignals.length === 0 ? (
               <div className="text-center py-12 px-6">
-                <Zap className="w-8 h-8 text-muted-foreground/30 mx-auto mb-3" />
+                <Zap className="w-8 h-8 text-muted-foreground/30 mx-auto mb-3 animate-pulse" />
                 <p className="text-xs text-muted-foreground uppercase">Generate a signal to begin trading</p>
               </div>
             ) : (
@@ -399,7 +420,7 @@ export default function Dashboard() {
                   <div
                     key={signal.id}
                     onClick={() => setSelectedSignalId(signal.id)}
-                    className={`p-4 cursor-pointer hover:bg-muted/30 transition-colors ${selectedSignalId === signal.id ? 'bg-muted/30 border-l-2 border-primary' : 'border-l-2 border-transparent'}`}
+                    className={`p-4 cursor-pointer transition-all duration-200 hover:bg-muted/20 ${selectedSignalId === signal.id ? 'bg-muted/30 border-l-2 border-primary' : 'border-l-2 border-transparent'}`}
                   >
                     <div className="flex justify-between items-start mb-3">
                       <div>
@@ -409,7 +430,7 @@ export default function Dashboard() {
                           {format(new Date(signal.createdAt), "HH:mm:ss")} • Expiry: {EXPIRY_MAP[signal.timeframe] || signal.timeframe}
                         </div>
                       </div>
-                      <div className={`px-3 py-1.5 border font-bold text-sm flex items-center gap-1 ${signal.action === 'BUY' ? 'border-success text-success bg-success/10' : 'border-destructive text-destructive bg-destructive/10'}`}>
+                      <div className={`px-3 py-1.5 border font-bold text-sm flex items-center gap-1 transition-all ${signal.action === 'BUY' ? 'border-success text-success bg-success/10' : 'border-destructive text-destructive bg-destructive/10'}`}>
                         {signal.action === 'BUY' ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
                         {signal.action === 'BUY' ? 'CALL ↑' : 'PUT ↓'}
                       </div>
@@ -431,16 +452,18 @@ export default function Dashboard() {
                       <Button
                         size="sm"
                         variant="outline"
-                        className="flex-1 rounded-none border-success/40 text-success hover:bg-success hover:text-success-foreground uppercase text-[10px] h-8"
+                        className="flex-1 rounded-none border-success/40 text-success hover:bg-success hover:text-success-foreground uppercase text-[10px] h-8 transition-all duration-150"
                         onClick={(e) => { e.stopPropagation(); handleUpdateResult(signal.id, "WIN"); }}
+                        disabled={updateResultMutation.isPending}
                       >
                         <CheckCircle2 className="w-3 h-3 mr-1" /> Won
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
-                        className="flex-1 rounded-none border-destructive/40 text-destructive hover:bg-destructive hover:text-destructive-foreground uppercase text-[10px] h-8"
+                        className="flex-1 rounded-none border-destructive/40 text-destructive hover:bg-destructive hover:text-destructive-foreground uppercase text-[10px] h-8 transition-all duration-150"
                         onClick={(e) => { e.stopPropagation(); handleUpdateResult(signal.id, "LOSS"); }}
+                        disabled={updateResultMutation.isPending}
                       >
                         <XCircle className="w-3 h-3 mr-1" /> Lost
                       </Button>
@@ -457,14 +480,14 @@ export default function Dashboard() {
                 <div
                   key={signal.id}
                   onClick={() => setSelectedSignalId(signal.id)}
-                  className={`p-3 cursor-pointer hover:bg-muted/30 transition-colors ${selectedSignalId === signal.id ? 'bg-muted/30 border-l-2 border-primary' : 'border-l-2 border-transparent'}`}
+                  className={`p-3 cursor-pointer transition-all duration-200 hover:bg-muted/20 ${selectedSignalId === signal.id ? 'bg-muted/30 border-l-2 border-primary' : 'border-l-2 border-transparent'}`}
                 >
                   <div className="flex justify-between items-center">
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-bold font-mono">{signal.asset}</span>
                         <span className={`text-[10px] font-bold px-1 ${signal.action === 'BUY' ? 'text-success' : 'text-destructive'}`}>
-                          {signal.action === 'BUY' ? 'CALL' : 'PUT'}
+                          {signal.action === 'BUY' ? 'CALL ↑' : 'PUT ↓'}
                         </span>
                       </div>
                       <span className="text-[10px] text-muted-foreground uppercase">
@@ -492,7 +515,7 @@ export default function Dashboard() {
       <div className="lg:col-span-5 bg-card border border-border h-[calc(100vh-6rem)] overflow-hidden flex flex-col">
         {selectedSignal ? (
           <>
-            {/* Header */}
+            {/* Signal Header */}
             <div className="p-5 border-b border-border bg-muted/10">
               <div className="flex justify-between items-start mb-4">
                 <div>
@@ -501,12 +524,17 @@ export default function Dashboard() {
                     <Badge variant="outline" className="rounded-none font-mono text-[10px] uppercase border-primary text-primary">
                       {selectedSignal.timeframe}
                     </Badge>
+                    {selectedSignal.result !== 'PENDING' && (
+                      <Badge className={`rounded-none font-bold text-[10px] ${selectedSignal.result === 'WIN' ? 'bg-success text-success-foreground' : 'bg-destructive text-destructive-foreground'}`}>
+                        {selectedSignal.result}
+                      </Badge>
+                    )}
                   </div>
                   <p className="text-[10px] text-muted-foreground uppercase">
                     {format(new Date(selectedSignal.createdAt), "MMM dd, yyyy • HH:mm:ss")}
                   </p>
                 </div>
-                <div className={`px-5 py-3 border flex flex-col items-center ${selectedSignal.action === 'BUY' ? 'border-success text-success bg-success/10' : 'border-destructive text-destructive bg-destructive/10'}`}>
+                <div className={`px-5 py-3 border flex flex-col items-center transition-all ${selectedSignal.action === 'BUY' ? 'border-success text-success bg-success/10' : 'border-destructive text-destructive bg-destructive/10'}`}>
                   <span className="text-[9px] uppercase font-bold opacity-70 mb-0.5">
                     {selectedSignal.action === 'BUY' ? 'CALL (UP)' : 'PUT (DOWN)'}
                   </span>
@@ -535,53 +563,53 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Vote summary bar */}
+            {/* Vote consensus bar */}
             {chartData.length > 0 && (
               <div className="px-5 py-3 border-b border-border flex items-center gap-3">
                 <span className="text-[10px] uppercase text-muted-foreground whitespace-nowrap">Consensus</span>
-                <div className="flex-1 h-3 bg-background border border-border overflow-hidden flex">
+                <div className="flex-1 h-3 bg-background border border-border overflow-hidden flex transition-all duration-500">
                   <div
-                    className="h-full bg-success transition-all"
-                    style={{ width: `${(buyVotes / 16) * 100}%` }}
+                    className="h-full bg-success transition-all duration-700 ease-out"
+                    style={{ width: `${(buyVotes / totalVotes) * 100}%` }}
                     title={`${buyVotes} CALL votes`}
                   />
                   <div
                     className="h-full bg-muted"
-                    style={{ width: `${(neutralVotes / 16) * 100}%` }}
+                    style={{ width: `${(neutralVotes / totalVotes) * 100}%` }}
                     title={`${neutralVotes} neutral`}
                   />
                   <div
-                    className="h-full bg-destructive transition-all"
-                    style={{ width: `${(sellVotes / 16) * 100}%` }}
+                    className="h-full bg-destructive transition-all duration-700 ease-out"
+                    style={{ width: `${(sellVotes / totalVotes) * 100}%` }}
                     title={`${sellVotes} PUT votes`}
                   />
                 </div>
                 <div className="flex gap-3 text-[10px] font-mono whitespace-nowrap">
-                  <span className="text-success">↑{buyVotes}</span>
+                  <span className="text-success font-bold">↑{buyVotes} CALL</span>
                   <span className="text-muted-foreground">={neutralVotes}</span>
-                  <span className="text-destructive">↓{sellVotes}</span>
+                  <span className="text-destructive font-bold">↓{sellVotes} PUT</span>
                 </div>
               </div>
             )}
 
-            {/* Waterfall chart */}
+            {/* 26-Indicator Waterfall Chart */}
             <div className="flex-1 overflow-auto p-0">
-              <div className="px-5 py-3 border-b border-border bg-muted/20 flex justify-between items-center sticky top-0">
+              <div className="px-5 py-3 border-b border-border bg-muted/20 flex justify-between items-center sticky top-0 z-10">
                 <h3 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
                   <Crosshair className="w-3 h-3" />
-                  16-Indicator Vote Breakdown
+                  26-Indicator Vote Breakdown
                 </h3>
                 <span className="text-[10px] text-muted-foreground">← PUT | CALL →</span>
               </div>
 
               {chartData.length > 0 ? (
-                <div className="px-2 py-4" style={{ height: `${chartData.length * 38 + 24}px`, minHeight: "500px" }}>
+                <div className="px-2 py-4" style={{ height: `${chartData.length * 36 + 24}px`, minHeight: "400px" }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
                       data={chartData}
                       layout="vertical"
                       margin={{ top: 4, right: 16, left: 8, bottom: 4 }}
-                      barSize={20}
+                      barSize={18}
                     >
                       <XAxis
                         type="number"
@@ -594,14 +622,14 @@ export default function Dashboard() {
                       <YAxis
                         type="category"
                         dataKey="name"
-                        width={110}
+                        width={115}
                         tick={{ fontSize: 9, fill: "#9ca3af", fontFamily: "monospace" }}
                         axisLine={false}
                         tickLine={false}
                       />
-                      <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(255,255,255,0.03)" }} />
+                      <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(255,255,255,0.02)" }} />
                       <ReferenceLine x={0} stroke="#374151" strokeWidth={1} />
-                      <Bar dataKey="value" radius={0} minPointSize={2}>
+                      <Bar dataKey="value" radius={0} minPointSize={2} animationDuration={800} animationEasing="ease-out">
                         {chartData.map((entry, index) => (
                           <Cell
                             key={`cell-${index}`}
@@ -617,8 +645,8 @@ export default function Dashboard() {
                         <LabelList
                           dataKey="direction"
                           position="insideRight"
-                          style={{ fontSize: 8, fontFamily: "monospace", fill: "rgba(255,255,255,0.6)", fontWeight: "bold" }}
-                          formatter={(v: string) => v === "NEUTRAL" ? "" : v}
+                          style={{ fontSize: 8, fontFamily: "monospace", fill: "rgba(255,255,255,0.55)", fontWeight: "bold" }}
+                          formatter={(v: string) => v === "NEUTRAL" ? "" : v === "BUY" ? "CALL" : "PUT"}
                         />
                       </Bar>
                     </BarChart>
@@ -633,9 +661,9 @@ export default function Dashboard() {
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground px-8 text-center">
-            <BarChart3 className="w-16 h-16 mb-4 opacity-15" />
+            <BarChart3 className="w-16 h-16 mb-4 opacity-10 animate-pulse" />
             <p className="text-sm uppercase tracking-widest font-bold opacity-40 mb-2">Indicator Vote Chart</p>
-            <p className="text-xs opacity-30 uppercase">Generate a signal to see how all 16 indicators voted on your trade</p>
+            <p className="text-xs opacity-30 uppercase leading-relaxed">Generate a signal to see how all 26 indicators voted on your trade direction</p>
           </div>
         )}
       </div>

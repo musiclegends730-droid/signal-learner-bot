@@ -5,6 +5,8 @@ import type { User, AuthInput } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 
+const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "") + "/../api";
+
 interface AuthContextType {
   user: User | null;
   token: string | null;
@@ -12,9 +14,25 @@ interface AuthContextType {
   login: (data: AuthInput) => Promise<void>;
   register: (data: AuthInput) => Promise<void>;
   logout: () => void;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+async function authFetch(path: string, options: RequestInit = {}): Promise<any> {
+  const token = localStorage.getItem("slb_token");
+  const res = await fetch(`/api${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers || {}),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.message || "Request failed");
+  return data;
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(localStorage.getItem("slb_token"));
@@ -56,11 +74,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       queryClient.setQueryData(getGetMeQueryKey(), res.user);
       setLocation("/");
     } catch (e: any) {
-      toast({
-        title: "Login Failed",
-        description: e.message || "Invalid credentials",
-        variant: "destructive",
-      });
+      toast({ title: "Login Failed", description: e.message || "Invalid credentials", variant: "destructive" });
       throw e;
     }
   };
@@ -72,11 +86,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       queryClient.setQueryData(getGetMeQueryKey(), res.user);
       setLocation("/");
     } catch (e: any) {
-      toast({
-        title: "Registration Failed",
-        description: e.message || "An error occurred",
-        variant: "destructive",
-      });
+      toast({ title: "Registration Failed", description: e.message || "An error occurred", variant: "destructive" });
       throw e;
     }
   };
@@ -87,26 +97,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setLocation("/login");
   };
 
+  const changePassword = async (currentPassword: string, newPassword: string) => {
+    await authFetch("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+  };
+
   return (
-    <AuthContext.Provider
-      value={{
-        user: user || null,
-        token,
-        isLoading: isUserLoading && !!token,
-        login,
-        register,
-        logout,
-      }}
-    >
+    <AuthContext.Provider value={{ user: user || null, token, isLoading: isUserLoading && !!token, login, register, logout, changePassword }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
 export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
-  return context;
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used within an AuthProvider");
+  return ctx;
 };
+
+export { authFetch };

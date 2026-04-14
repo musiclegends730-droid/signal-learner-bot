@@ -9,6 +9,18 @@ import { SUPPORTED_ASSETS } from '../marketData';
 export const signalsRouter = Router();
 signalsRouter.use(requireAuth);
 
+// Ensure all indicator weight rows exist for a user (handles new indicators added later)
+async function ensureWeightsExist(userId: number) {
+  const existing = await db.select().from(indicatorWeightsTable).where(eq(indicatorWeightsTable.userId, userId));
+  const existingNames = new Set(existing.map(r => r.name));
+  const missing = INDICATOR_NAMES.filter(n => !existingNames.has(n));
+  if (missing.length > 0) {
+    await db.insert(indicatorWeightsTable).values(
+      missing.map(name => ({ userId, name, weight: '1.0', correctPredictions: 0, totalPredictions: 0 }))
+    );
+  }
+}
+
 signalsRouter.get('/', async (req: AuthRequest, res) => {
   try {
     const signals = await db
@@ -25,30 +37,28 @@ signalsRouter.get('/', async (req: AuthRequest, res) => {
 
 signalsRouter.get('/stats', async (req: AuthRequest, res) => {
   try {
-    const signals = await db
-      .select()
-      .from(signalsTable)
-      .where(eq(signalsTable.userId, req.user!.id));
-    const weights = await db
-      .select()
-      .from(indicatorWeightsTable)
-      .where(eq(indicatorWeightsTable.userId, req.user!.id));
+    const signals = await db.select().from(signalsTable).where(eq(signalsTable.userId, req.user!.id));
+    const weights = await db.select().from(indicatorWeightsTable).where(eq(indicatorWeightsTable.userId, req.user!.id));
 
     const wins = signals.filter(s => s.result === 'WIN').length;
     const losses = signals.filter(s => s.result === 'LOSS').length;
     const decided = wins + losses;
-    const winRate = decided === 0 ? 0 : (wins / decided) * 100;
 
-    const pendingSignals = signals.filter(s => s.result === 'PENDING');
-    const currentConfidence = pendingSignals.length > 0
-      ? pendingSignals.reduce((a, s) => a + s.confidence, 0) / pendingSignals.length
-      : 0;
+    // Return as decimal 0-1 so frontend can multiply by 100
+    const winRate = decided === 0 ? 0 : wins / decided;
+
+    const closedSignals = signals.filter(s => s.result !== 'PENDING');
+    const currentConfidence = closedSignals.length > 0
+      ? closedSignals.reduce((a, s) => a + s.confidence, 0) / closedSignals.length
+      : signals.length > 0
+        ? signals.reduce((a, s) => a + s.confidence, 0) / signals.length
+        : 0;
 
     res.json({
       totalSignals: signals.length,
       wins,
       losses,
-      winRate: Math.round(winRate * 10) / 10,
+      winRate: Math.round(winRate * 10000) / 10000,
       currentConfidence: Math.round(currentConfidence),
       indicatorWeights: weights,
     });
@@ -59,6 +69,7 @@ signalsRouter.get('/stats', async (req: AuthRequest, res) => {
 
 signalsRouter.get('/weights', async (req: AuthRequest, res) => {
   try {
+    await ensureWeightsExist(req.user!.id);
     const weights = await db
       .select()
       .from(indicatorWeightsTable)
@@ -73,6 +84,8 @@ signalsRouter.post('/generate', async (req: AuthRequest, res) => {
   try {
     const { asset, timeframe = '5m' } = req.body;
     if (!asset) return res.status(400).json({ message: 'Asset is required' });
+
+    await ensureWeightsExist(req.user!.id);
 
     const weightsRows = await db
       .select()
@@ -120,6 +133,7 @@ signalsRouter.patch('/:id/result', async (req: AuthRequest, res) => {
       .where(and(eq(signalsTable.id, id), eq(signalsTable.userId, req.user!.id)));
 
     if (!signal) return res.status(404).json({ message: 'Signal not found' });
+    if (signal.result !== 'PENDING') return res.status(400).json({ message: 'Signal result already set' });
 
     const [updated] = await db
       .update(signalsTable)
@@ -128,6 +142,7 @@ signalsRouter.patch('/:id/result', async (req: AuthRequest, res) => {
       .returning();
 
     if (signal.indicators) {
+      await ensureWeightsExist(req.user!.id);
       const weightsRows = await db
         .select()
         .from(indicatorWeightsTable)
@@ -149,18 +164,27 @@ signalsRouter.patch('/:id/result', async (req: AuthRequest, res) => {
 
       for (const name of INDICATOR_NAMES) {
         const row = weightsRows.find(r => r.name === name);
-        const isCorrect = (result === 'WIN' && (signal.indicators as any)[name]?.direction === signal.action) ||
-          (result === 'LOSS' && (signal.indicators as any)[name]?.direction !== signal.action &&
-            (signal.indicators as any)[name]?.direction !== 'NEUTRAL');
+        const indicatorVote = (signal.indicators as any)[name];
+        const isCorrect =
+          (result === 'WIN' && indicatorVote?.direction === signal.action) ||
+          (result === 'LOSS' && indicatorVote?.direction !== signal.action && indicatorVote?.direction !== 'NEUTRAL');
         if (row) {
           await db.update(indicatorWeightsTable)
             .set({
-              weight: String(newWeights[name]),
+              weight: String(newWeights[name as keyof WeightMap] ?? row.weight),
               correctPredictions: isCorrect ? row.correctPredictions + 1 : row.correctPredictions,
               totalPredictions: row.totalPredictions + 1,
               updatedAt: new Date(),
             })
             .where(eq(indicatorWeightsTable.id, row.id));
+        } else {
+          await db.insert(indicatorWeightsTable).values({
+            userId: req.user!.id,
+            name,
+            weight: String(newWeights[name as keyof WeightMap] ?? 1.0),
+            correctPredictions: isCorrect ? 1 : 0,
+            totalPredictions: 1,
+          });
         }
       }
     }
