@@ -5,7 +5,7 @@ import type { User, AuthInput } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 
-const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "") + "/../api";
+const API_BASE = "https://signal-api-zfti.onrender.com/api";
 
 interface AuthContextType {
   user: User | null;
