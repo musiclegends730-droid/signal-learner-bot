@@ -21,7 +21,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 async function authFetch(path: string, options: RequestInit = {}): Promise<any> {
   const token = localStorage.getItem("slb_token");
-  const res = await fetch(`/api${path}`, {
+  const res = await fetch(`https://signal-api-zfti.onrender.com/api${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
