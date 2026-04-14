@@ -26,16 +26,7 @@ authRouter.post('/register', async (req, res) => {
       role: isFirst ? 'admin' : 'user',
     }).returning();
 
-    // Seed all indicator weights for this user
-    await db.insert(indicatorWeightsTable).values(
-      INDICATOR_NAMES.map(name => ({
-        userId: user.id,
-        name,
-        weight: '1.0',
-        correctPredictions: 0,
-        totalPredictions: 0,
-      }))
-    );
+    // Global weights are shared — no per-user seeding needed
 
     const token = signJwt({ id: user.id, username: user.username, role: user.role });
     res.status(201).json({

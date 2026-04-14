@@ -4,21 +4,23 @@ import { signalsTable, indicatorWeightsTable } from '@workspace/db';
 import { eq, and, desc } from 'drizzle-orm';
 import { requireAuth, type AuthRequest } from '../auth';
 import { generateSignal, computeWeightUpdates, INDICATOR_NAMES, type WeightMap } from '../mlEngine';
-import { SUPPORTED_ASSETS } from '../marketData';
+import { ensureGlobalWeightsExist, getGlobalUserId } from '../globalModel';
 
 export const signalsRouter = Router();
 signalsRouter.use(requireAuth);
 
-// Ensure all indicator weight rows exist for a user (handles new indicators added later)
-async function ensureWeightsExist(userId: number) {
-  const existing = await db.select().from(indicatorWeightsTable).where(eq(indicatorWeightsTable.userId, userId));
-  const existingNames = new Set(existing.map(r => r.name));
-  const missing = INDICATOR_NAMES.filter(n => !existingNames.has(n));
-  if (missing.length > 0) {
-    await db.insert(indicatorWeightsTable).values(
-      missing.map(name => ({ userId, name, weight: '1.0', correctPredictions: 0, totalPredictions: 0 }))
-    );
-  }
+// Fetch global weights as a WeightMap
+async function getGlobalWeights(): Promise<{ rows: any[]; map: WeightMap }> {
+  await ensureGlobalWeightsExist();
+  const gId = await getGlobalUserId();
+  const rows = await db.select().from(indicatorWeightsTable).where(eq(indicatorWeightsTable.userId, gId));
+  const map: WeightMap = Object.fromEntries(
+    INDICATOR_NAMES.map(n => {
+      const row = rows.find(r => r.name === n);
+      return [n, row ? parseFloat(String(row.weight)) : 1.0];
+    })
+  ) as WeightMap;
+  return { rows, map };
 }
 
 signalsRouter.get('/', async (req: AuthRequest, res) => {
@@ -38,13 +40,11 @@ signalsRouter.get('/', async (req: AuthRequest, res) => {
 signalsRouter.get('/stats', async (req: AuthRequest, res) => {
   try {
     const signals = await db.select().from(signalsTable).where(eq(signalsTable.userId, req.user!.id));
-    const weights = await db.select().from(indicatorWeightsTable).where(eq(indicatorWeightsTable.userId, req.user!.id));
+    const { rows: weights } = await getGlobalWeights();
 
     const wins = signals.filter(s => s.result === 'WIN').length;
     const losses = signals.filter(s => s.result === 'LOSS').length;
     const decided = wins + losses;
-
-    // Return as decimal 0-1 so frontend can multiply by 100
     const winRate = decided === 0 ? 0 : wins / decided;
 
     const closedSignals = signals.filter(s => s.result !== 'PENDING');
@@ -69,12 +69,8 @@ signalsRouter.get('/stats', async (req: AuthRequest, res) => {
 
 signalsRouter.get('/weights', async (req: AuthRequest, res) => {
   try {
-    await ensureWeightsExist(req.user!.id);
-    const weights = await db
-      .select()
-      .from(indicatorWeightsTable)
-      .where(eq(indicatorWeightsTable.userId, req.user!.id));
-    res.json(weights);
+    const { rows } = await getGlobalWeights();
+    res.json(rows);
   } catch (err: any) {
     res.status(500).json({ message: err.message });
   }
@@ -85,20 +81,7 @@ signalsRouter.post('/generate', async (req: AuthRequest, res) => {
     const { asset, timeframe = '5m' } = req.body;
     if (!asset) return res.status(400).json({ message: 'Asset is required' });
 
-    await ensureWeightsExist(req.user!.id);
-
-    const weightsRows = await db
-      .select()
-      .from(indicatorWeightsTable)
-      .where(eq(indicatorWeightsTable.userId, req.user!.id));
-
-    const weights: WeightMap = Object.fromEntries(
-      INDICATOR_NAMES.map(n => {
-        const row = weightsRows.find(r => r.name === n);
-        return [n, row ? parseFloat(String(row.weight)) : 1.0];
-      })
-    ) as WeightMap;
-
+    const { map: weights } = await getGlobalWeights();
     const decision = await generateSignal(asset, timeframe, weights);
 
     const [signal] = await db.insert(signalsTable).values({
@@ -141,19 +124,10 @@ signalsRouter.patch('/:id/result', async (req: AuthRequest, res) => {
       .where(eq(signalsTable.id, id))
       .returning();
 
+    // Update the global shared model weights
     if (signal.indicators) {
-      await ensureWeightsExist(req.user!.id);
-      const weightsRows = await db
-        .select()
-        .from(indicatorWeightsTable)
-        .where(eq(indicatorWeightsTable.userId, req.user!.id));
-
-      const currentWeights: WeightMap = Object.fromEntries(
-        INDICATOR_NAMES.map(n => {
-          const row = weightsRows.find(r => r.name === n);
-          return [n, row ? parseFloat(String(row.weight)) : 1.0];
-        })
-      ) as WeightMap;
+      const { rows: weightsRows, map: currentWeights } = await getGlobalWeights();
+      const gId = await getGlobalUserId();
 
       const newWeights = computeWeightUpdates(
         signal.indicators as any,
@@ -176,15 +150,7 @@ signalsRouter.patch('/:id/result', async (req: AuthRequest, res) => {
               totalPredictions: row.totalPredictions + 1,
               updatedAt: new Date(),
             })
-            .where(eq(indicatorWeightsTable.id, row.id));
-        } else {
-          await db.insert(indicatorWeightsTable).values({
-            userId: req.user!.id,
-            name,
-            weight: String(newWeights[name as keyof WeightMap] ?? 1.0),
-            correctPredictions: isCorrect ? 1 : 0,
-            totalPredictions: 1,
-          });
+            .where(and(eq(indicatorWeightsTable.id, row.id), eq(indicatorWeightsTable.userId, gId)));
         }
       }
     }
